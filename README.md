@@ -1,7 +1,6 @@
-<h2 align="center">
-  <b>G4Splat: Geometry-Guided Gaussian Splatting</b>
+<h2 align="center" style="font-size:24px;">
+  <b>G4Splat: Geometry-Guided Gaussian Splatting with Generative Prior</b>
   <br>
-  <b>with Generative Prior</b>
 
   <b><i>arXiv 2025 </i></b>
 </h2>
@@ -24,10 +23,10 @@
 </p>
 
 <p align="center">
-    <a href=''>
+    <a href='https://arxiv.org/abs/2510.12099'>
       <img src='https://img.shields.io/badge/Paper-arXiv-red?style=plastic&logo=adobeacrobatreader&logoColor=red' alt='Paper arXiv'>
     </a>
-    <a href=''>
+    <a href='https://dali-jack.github.io/g4splat-web'>
       <img src='https://img.shields.io/badge/Project-Page-blue?style=plastic&logo=Google%20chrome&logoColor=blue' alt='Project Page'>
     </a>
 </p>
@@ -38,7 +37,7 @@
 
 <b>G4Splat</b> integrates <b>accurate geometry guidance with generative prior</b> to enhance 3D scene reconstruction, substantially improving both geometric fidelity and appearance quality in observed and unobserved regions.
 
-The full code will be released after the paper is accepted.
+We are currently organizing the code and expect to release it publicly within two weeks. Stay tuned!
 
 ## Citation
 
@@ -46,7 +45,7 @@ The full code will be released after the paper is accepted.
 @article{ni2025g4splat,
     title={G4Splat: Geometry-Guided Gaussian Splatting with Generative Prior},
     author={Ni, Junfeng and Chen, Yixin and Yang, Zhifei and Liu, Yu and Lu, Ruijie and Zhu, Song-Chun and Huang, Siyuan},
-    journal={arXiv},
+    journal={arXiv preprint arXiv:2510.12099},
     year={2025}
 }
 ```
