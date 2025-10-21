@@ -121,6 +121,8 @@ wget https://download.europe.naverlabs.com/ComputerVision/MASt3R/MASt3R_ViTLarge
 
 Then, download the SAM checkpoint:
 ```shell
+mkdir -p ./checkpoint/
+mkdir -p ./checkpoint/segment-anything/
 wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth -P ./checkpoint/segment-anything/
 ```
 
