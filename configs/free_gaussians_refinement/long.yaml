@@ -1,0 +1,8 @@
+type: '2dgs'
+iterations: 30000
+densify_until_iter: 15000
+opacity_reset_interval: 3000
+depth_ratio: 0.5
+normal_consistency_from: 7000
+distortion_from: 3000
+use_mip_filter: true

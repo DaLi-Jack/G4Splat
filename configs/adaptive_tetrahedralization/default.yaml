@@ -1,0 +1,23 @@
+gaussian_flatness: 0.0002
+depth_ratio: 1.0
+filter_mesh: true
+
+interpolate_depth: true
+interpolation_mode: bilinear
+weight_interpolation_by_depth_gradient: false
+truncation_margin: 0.005
+
+use_dilated_depth: false
+use_sdf_tolerance: false
+use_unbiased_tsdf: false
+use_binary_opacity: false
+
+filter_with_depth_gradient: false
+filter_with_normal_consistency: false
+
+weight_by_softmax: false
+weight_by_normal_consistency: false
+softmax_temperature: 1.0
+
+n_neighbors_to_interpolate: 2
+n_interpolated_cameras_for_each_neighbor: 10

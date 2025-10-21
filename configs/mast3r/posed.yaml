@@ -1,0 +1,29 @@
+# Model weights
+weights_path: './mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric.pth'
+retrieval_model: './mast3r/checkpoints/MASt3R_ViTLarge_BaseDecoder_512_catmlpdpt_metric_retrieval_trainingfree.pth'
+
+# Input data
+image_size: 512
+
+# Parameters for posed datasets
+use_calibrated_poses: True
+align_camera_locations: True
+
+# Optimization
+n_coarse_iterations: 1000
+n_refinement_iterations: 1000
+max_window_size: 20
+max_refid: 10
+min_conf_thr: 0.
+matching_conf_thr: 0.
+fix_focal: True
+fix_principal_point: True
+fix_rotation: True
+fix_translation: True
+
+# Postprocessing
+TSDF_thresh: 0.0
+output_conf_thr: 0.1
+
+# Output
+save_glb: False

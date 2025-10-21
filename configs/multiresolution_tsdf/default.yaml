@@ -1,0 +1,4 @@
+depth_ratio: 1.0
+num_cluster: 50
+mesh_res: 1024
+multires_factors: [2,8,16]

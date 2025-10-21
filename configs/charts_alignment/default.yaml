@@ -1,0 +1,67 @@
+# Pointmap
+pointmap:
+  eval_split: False
+  eval_split_interval: 8
+  max_img_size: 1600
+  pointmap_img_size: 512
+  randomize_images: False
+  max_sfm_points: null  # None/null for all points
+  sfm_confidence_threshold: -1.
+  average_focal_distances: False
+
+# Scene
+scene:
+  target_scale: 5.
+
+# Masking
+masking:
+  use_masks_for_alignment: False
+  sfm_mask_threshold: 0.25
+
+# Alignment
+alignment:
+  # Architecture parameters
+  use_learnable_depth_encoding: True
+  learnable_depth_encoding_mode: 'add'
+  predict_in_disparity_space: False
+  use_learnable_confidence: True
+  use_meta_mlp: False
+  use_lora_mlp: False
+  lora_rank: 4
+  n_lora_layers: 2
+  use_multi_res_charts_encoding: True
+
+  # Optimization parameters
+  n_iterations: 1000
+  encodings_lr: 0.01  # 1e-2
+  mlp_lr: 0.001  # 1e-3
+  confidence_lr: 0.001  # 1e-3
+  lr_update_iters: [1000]
+  lr_update_factor: 0.1
+
+  # Default regularizations
+  use_gradient_loss: False
+  gradient_loss_weight: 50.
+  use_hessian_loss: False
+  hessian_loss_weight: 100.
+  use_normal_loss: True
+  normal_loss_weight: 4.
+  use_curvature_loss: True
+  curvature_loss_weight: 1.
+
+  # Alignment loss
+  use_matching_loss: True
+  matching_update_iters: null  # None/null for no matching update
+  matching_loss_weight: 5.
+  matching_thr_factor: 0.05  # 1. / 20.
+  use_confidence_in_matching_loss: False
+  use_reprojection_loss: False
+  reprojection_loss_weight: 2.
+  reprojection_loss_power: 0.5
+
+  # Strong regularizations
+  regularize_chart_encodings_norms: False
+  use_total_variation_on_depth_encodings: False
+  weight_encodings_with_confidence: False
+  chart_encodings_norm_loss_weight: 2.
+  total_variation_on_depth_encodings_weight: 5.
