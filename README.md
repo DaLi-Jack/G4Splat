@@ -2,7 +2,7 @@
   <b>G4Splat: Geometry-Guided Gaussian Splatting with Generative Prior</b>
   <br>
 
-  <b><i>arXiv 2025 </i></b>
+  <b><i>ICLR 2026 </i></b>
 </h2>
 
 <p align="center">
@@ -171,11 +171,11 @@ Some codes are borrowed from [MAtCha](https://github.com/Anttwo/MAtCha), [Neural
 ## Citation
 
 ```bibtex
-@article{ni2025g4splat,
+@inproceedings{ni2026g4splat,
     title={G4Splat: Geometry-Guided Gaussian Splatting with Generative Prior},
     author={Ni, Junfeng and Chen, Yixin and Yang, Zhifei and Liu, Yu and Lu, Ruijie and Zhu, Song-Chun and Huang, Siyuan},
-    journal={arXiv preprint arXiv:2510.12099},
-    year={2025}
+    booktitle={The Fourteenth International Conference on Learning Representations},
+    year={2026}
 }
 ```
 
