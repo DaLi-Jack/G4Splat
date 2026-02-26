@@ -7,7 +7,7 @@
 
 <p align="center">
     <a href="https://dali-jack.github.io/Junfeng-Ni/">Junfeng Ni </a><sup>1,2,*</sup>,
-    <a href="https://yixchen.github.io/">Yixin Chen </a><sup>2,✉</sup>,
+    <a href="https://yixchen.github.io/">Yixin Chen </a><sup>2,†,✉</sup>,
     <a href="https://github.com/isxiaohe/">Zhifei Yang </a><sup>3</sup>,
     <a href="https://yuliu-ly.github.io/">Yu Liu </a><sup>1,2</sup>,
     <a href="https://jason-aplp.github.io/Ruijie-Lu/">Ruijie Lu </a><sup>3</sup>,
@@ -15,9 +15,10 @@
     <a href="https://siyuanhuang.com/">Siyuan Huang </a><sup>2,✉</sup>
     <br>
     <sup>*</sup> Work done as an intern at BIGAI &nbsp
-    <sup>✉</sup> Corresponding author &nbsp
-    <sup>1</sup>Tsinghua University 
+    <sup>†</sup> Project lead &nbsp
+    <sup>✉</sup> Corresponding author
     <br>
+    <sup>1</sup>Tsinghua University &nbsp
     <sup>2</sup>State Key Laboratory of General Artificial Intelligence, BIGAI &nbsp
     <sup>3</sup>Peking University
 </p>
