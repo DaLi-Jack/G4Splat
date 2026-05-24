@@ -40,6 +40,8 @@
 
 ## News 🔥🔥🔥
 
+* ⚡ **[2026/05]** Added **warp-based Gaussian downsampling** for memory-efficient training on 24GB GPUs. It eliminates multi-view redundancy while preserving fine structures that are typically lost in voxel downsampling.
+
 * 🚀 [SceneVerse++](https://sv-pp.github.io/) leverages our method to reconstruct **1,019 high-quality 3D scenes** from challenging **raw Internet videos**, highlighting the scalability of our approach for real-world web content!
 
 
@@ -157,15 +159,26 @@ Please download the preprocessed [data](https://huggingface.co/datasets/JunfengN
 ## 3.Training and Evaluation
 The evaluation code is integrated into `train.py`, so evaluation will run automatically after training.
 ```bash
-# Tested on A100 80GB GPU. You can add "--use_downsample_gaussians" to run on a 3090 24GB GPU.
+# Tested on A100 80GB GPU. 
 python train.py -s data/DATASET_NAME/SCAN_ID -o output/DATASET_NAME/SCAN_ID --sfm_config posed --use_view_config --config_view_num 5 --select_inpaint_num 10  --tetra_downsample_ratio 0.25
+
+# For GPUs with limited VRAM (e.g., RTX 3090 24GB), enable Gaussian downsampling:
+# 1. Warp-based (Default): Initializes Gaussians based on depth projection to avoid redundancy.
+#    Usage: --use_downsample_gaussians
+#    Equivalent to: --use_downsample_gaussians --downsample_gaussians_type warp --warp_depth_error_thresh 0.01 --warp_downsample_pixel_grid_size -1
+# 2. Voxel-based: Faster, but might lose some fine geometric structures.
+#    Usage: --use_downsample_gaussians --downsample_gaussians_type voxel
 ```
 **Note:** The reproduced results may vary due to the randomness inherent in the generative model (See3D), especially in unstructured regions such as ceilings. You may get worse or even better results than those reported in the paper. If the results are worse, simply rerunning the code should produce improved outcomes.
 
 We also provide command for dense-view reconstruction:
 ```bash
 # Tested on 3090 24GB GPU.
-python train.py -s data/denseview/scan1 -o output/denseview/scan1 --sfm_config posed --use_view_config --config_view_num 20 --use_downsample_gaussians --tetra_downsample_ratio 0.25 --use_dense_view
+# Step 1: Generate chart views for alignment
+python scripts/gen_chart_view_split.py --config_view_num 20
+# Step 2: Run training in dense-view mode
+python train.py -s data/denseview/scan1 -o output/denseview/scan1 --sfm_config posed --use_view_config --config_view_num 20 --use_downsample_gaussians --tetra_downsample_ratio 0.25 --use_dense_view 
+# Note: If your captured data exhibits severe illumination variations, append "--downweight_input_view_color_loss" to achieve smoother surface geometry.
 ```
 
 
@@ -183,5 +196,4 @@ Some codes are borrowed from [MAtCha](https://github.com/Anttwo/MAtCha), [Neural
     year={2026}
 }
 ```
-
 

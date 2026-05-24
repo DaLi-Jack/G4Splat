@@ -24,6 +24,7 @@ from utils.sh_utils import SH2RGB
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
+from scene.gaussian_model import get_gaussian_parameters_by_warp_from_depths
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
@@ -72,7 +73,9 @@ def training(
     use_refined_charts, use_mip_filter, dense_data_path, use_chart_view_every_n_iter,
     normal_consistency_from, distortion_from,
     depthanythingv2_checkpoint_dir, depthanything_encoder, 
-    dense_regul, refine_depth_path, use_downsample_gaussians
+    dense_regul, refine_depth_path, use_downsample_gaussians,
+    downsample_gaussians_type, warp_depth_error_thresh, warp_downsample_pixel_grid_size,
+    downweight_input_view_color_loss
 ):
     
     save_log_images = False
@@ -142,37 +145,33 @@ def training(
     # ===================================================================================
     # Initialize gaussians
     max_gaussians_num = 10_000_000
-    print(f"Max gaussians num: {max_gaussians_num}, use downsample gaussians: {use_downsample_gaussians}")
-
-    input_view_depths = pa_depths[:input_view_num]
-    input_view_depths_stack = torch.stack(input_view_depths, dim=0).cuda()
-    _images = [cam.original_image.cuda().permute(1, 2, 0) for cam in scene.getTrainCameras()]
-    pa_points = depths_to_points_parallel(input_view_depths_stack, scene.getTrainCameras())
-    N, H, W = input_view_depths_stack.shape
-    pa_points = pa_points.reshape(N, H, W, 3)
-    max_init_gs_input_view_num = 50                     # NOTE: hard code for gs initialization when using dense views
-    if input_view_num > max_init_gs_input_view_num:
-        print(f'[INFO]: Input view num is too large: {input_view_num}, use {max_init_gs_input_view_num} views for gs initialization')
-        init_view_ids = np.linspace(0, input_view_num - 1, max_init_gs_input_view_num, dtype=int)
-        init_pa_points = [pa_points[i] for i in init_view_ids]
-        init_pa_points_stack = torch.stack(init_pa_points, dim=0).cuda()
-        init_images = [_images[i] for i in init_view_ids]
-    else:
-        init_pa_points_stack = pa_points
-        init_images = _images
-
-    input_view_gaussian_params = get_gaussian_parameters_from_pa_data(
-        pa_points=init_pa_points_stack,
-        images=init_images,
-        conf_th=-1.,  # TODO: Try higher values
-        ratio_th=5.,
-        normal_scale=1e-10,
-        normalized_scales=0.5,
+    print(
+        f"Max gaussians num: {max_gaussians_num}, use downsample gaussians: {use_downsample_gaussians}, "
+        f"downsample type: {downsample_gaussians_type}"
     )
 
+    input_view_depths = pa_depths[:input_view_num]
+    _images = [cam.original_image.cuda().permute(1, 2, 0) for cam in scene.getTrainCameras()]
+    use_warp_downsample = use_downsample_gaussians and downsample_gaussians_type == "warp"
+    voxel_max_init_gs_input_view_num = 50
+    warp_max_init_gs_input_view_num = None
+    max_init_gs_input_view_num = warp_max_init_gs_input_view_num if use_warp_downsample else voxel_max_init_gs_input_view_num
+    if max_init_gs_input_view_num is not None and input_view_num > max_init_gs_input_view_num:
+        print(f'[INFO]: Input view num is too large: {input_view_num}, use {max_init_gs_input_view_num} views for gs initialization')
+        init_view_ids = np.linspace(0, input_view_num - 1, max_init_gs_input_view_num, dtype=int)
+        init_input_view_depths = [input_view_depths[i] for i in init_view_ids]
+        init_input_views = [scene.getTrainCameras()[i] for i in init_view_ids]
+        init_images = [_images[i] for i in init_view_ids]
+    else:
+        init_input_view_depths = input_view_depths
+        init_input_views = scene.getTrainCameras()
+        init_images = _images
+
+    warp_init_depths = list(init_input_view_depths)
+    warp_init_views = list(init_input_views)
+    
     if see3d_view_num > 0:
         see3d_view_depths = pa_depths[input_view_num:]
-        see3d_view_depths_stack = torch.stack(see3d_view_depths, dim=0).cuda()
         _images = [cam.original_image.cuda().permute(1, 2, 0) for cam in see3d_gs_cameras_list]
 
         if see3d_view_num > 30:
@@ -180,61 +179,90 @@ def training(
             # NOTE: hard code for 15 select inpaint views, use 0 - 9, 15 - 24, 30 - 39 (in see3d view id)
             used_see3d_init_gs_view_list = list(range(10)) + list(range(15, 25)) + list(range(30, see3d_view_num))
             init_gs_see3d_view_depths = [see3d_view_depths[i] for i in used_see3d_init_gs_view_list]
-            init_gs_see3d_view_depths_stack = torch.stack(init_gs_see3d_view_depths, dim=0).cuda()
             init_gs_see3d_gs_cameras_list = [see3d_gs_cameras_list[i] for i in used_see3d_init_gs_view_list]
             init_gs_see3d_images = [_images[i] for i in used_see3d_init_gs_view_list]
+            warp_init_depths.extend(init_gs_see3d_view_depths)
+            warp_init_views.extend(init_gs_see3d_gs_cameras_list)
 
-            init_gs_see3d_points = depths_to_points_parallel(init_gs_see3d_view_depths_stack, init_gs_see3d_gs_cameras_list)
-            N, H, W = init_gs_see3d_view_depths_stack.shape
-            init_gs_see3d_points = init_gs_see3d_points.reshape(N, H, W, 3)
-            see3d_gaussian_params = get_gaussian_parameters_from_pa_data(
-                pa_points=init_gs_see3d_points,
-                images=init_gs_see3d_images,
-                conf_th=-1.,  # TODO: Try higher values
-                ratio_th=5.,
-                normal_scale=1e-10,
-                normalized_scales=0.5,
-            )
+            if not use_warp_downsample:
+                init_gs_see3d_view_depths_stack = torch.stack(init_gs_see3d_view_depths, dim=0).cuda()
+                init_gs_see3d_points = depths_to_points_parallel(init_gs_see3d_view_depths_stack, init_gs_see3d_gs_cameras_list)
+                N, H, W = init_gs_see3d_view_depths_stack.shape
+                init_gs_see3d_points = init_gs_see3d_points.reshape(N, H, W, 3)
+                see3d_gaussian_params = get_gaussian_parameters_from_pa_data(
+                    pa_points=init_gs_see3d_points,
+                    images=init_gs_see3d_images,
+                    conf_th=-1.,  # TODO: Try higher values
+                    ratio_th=5.,
+                    normal_scale=1e-10,
+                    normalized_scales=0.5,
+                )
 
         else:
-            see3d_points = depths_to_points_parallel(see3d_view_depths_stack, see3d_gs_cameras_list)
-            N, H, W = see3d_view_depths_stack.shape
-            see3d_points = see3d_points.reshape(N, H, W, 3)
-            see3d_gaussian_params = get_gaussian_parameters_from_pa_data(
-                pa_points=see3d_points,
-                images=_images,
-                conf_th=-1.,  # TODO: Try higher values
-                ratio_th=5.,
-                normal_scale=1e-10,
-                normalized_scales=0.5,
-            )
+            warp_init_depths.extend(see3d_view_depths)
+            warp_init_views.extend(see3d_gs_cameras_list)
+            if not use_warp_downsample:
+                see3d_view_depths_stack = torch.stack(see3d_view_depths, dim=0).cuda()
+                see3d_points = depths_to_points_parallel(see3d_view_depths_stack, see3d_gs_cameras_list)
+                N, H, W = see3d_view_depths_stack.shape
+                see3d_points = see3d_points.reshape(N, H, W, 3)
+                see3d_gaussian_params = get_gaussian_parameters_from_pa_data(
+                    pa_points=see3d_points,
+                    images=_images,
+                    conf_th=-1.,  # TODO: Try higher values
+                    ratio_th=5.,
+                    normal_scale=1e-10,
+                    normalized_scales=0.5,
+                )
 
-        gaussian_params = {}
-        for key in input_view_gaussian_params.keys():
-            gaussian_params[key] = torch.cat([input_view_gaussian_params[key], see3d_gaussian_params[key]], dim=0)
-
+    if use_warp_downsample:
+        _means, _scales, _quaternions, _colors = get_gaussian_parameters_by_warp_from_depths(
+            depths=warp_init_depths,
+            views=warp_init_views,
+            depth_error_thresh=warp_depth_error_thresh,
+            downsample_pixel_grid_size=warp_downsample_pixel_grid_size,
+        )
+        print(f"Warp-downsampled Gaussian initialization produced {len(_means)} gaussians.")
     else:
-        gaussian_params = input_view_gaussian_params
+        input_view_depths_stack = torch.stack(init_input_view_depths, dim=0).cuda()
+        pa_points = depths_to_points_parallel(input_view_depths_stack, init_input_views)
+        N, H, W = input_view_depths_stack.shape
+        pa_points = pa_points.reshape(N, H, W, 3)
+        input_view_gaussian_params = get_gaussian_parameters_from_pa_data(
+            pa_points=pa_points,
+            images=init_images,
+            conf_th=-1.,  # TODO: Try higher values
+            ratio_th=5.,
+            normal_scale=1e-10,
+            normalized_scales=0.5,
+        )
 
-    # Downsample gaussians
-    if len(gaussian_params['means']) > max_gaussians_num and use_downsample_gaussians:
-        sample_idx, downsample_factor = voxel_downsample_gaussians(gaussian_params, voxel_size=0.01)
-        print(f"Downsampled {len(gaussian_params['means'])} gaussians to {len(sample_idx)} gaussians...")
-    else:
-        sample_idx = torch.arange(len(gaussian_params['means']))
-        downsample_factor = 1.0
-        print(f"Not downsampling gaussians, using all {len(gaussian_params['means'])} gaussians...")
+        if see3d_view_num > 0:
+            gaussian_params = {}
+            for key in input_view_gaussian_params.keys():
+                gaussian_params[key] = torch.cat([input_view_gaussian_params[key], see3d_gaussian_params[key]], dim=0)
+        else:
+            gaussian_params = input_view_gaussian_params
 
-    print(f"Final number of gaussians: {len(sample_idx)}")
-    
-    _means = gaussian_params['means'][sample_idx]
-    _scales = gaussian_params['scales'][..., :2][sample_idx] * downsample_factor
-    _quaternions = gaussian_params['quaternions'][sample_idx]
-    _colors = gaussian_params['colors'][sample_idx]
+        # Downsample gaussians
+        if len(gaussian_params['means']) > max_gaussians_num and use_downsample_gaussians:
+            sample_idx, downsample_factor = voxel_downsample_gaussians(gaussian_params, voxel_size=0.01)
+            print(f"Voxel-downsampled {len(gaussian_params['means'])} gaussians to {len(sample_idx)} gaussians...")
+        else:
+            sample_idx = torch.arange(len(gaussian_params['means']), device=gaussian_params['means'].device)
+            downsample_factor = 1.0
+            print(f"Not downsampling gaussians, using all {len(gaussian_params['means'])} gaussians...")
+
+        _means = gaussian_params['means'][sample_idx]
+        _scales = gaussian_params['scales'][..., :2][sample_idx] * downsample_factor
+        _quaternions = gaussian_params['quaternions'][sample_idx]
+        _colors = gaussian_params['colors'][sample_idx]
+
+    print(f"Final number of gaussians: {len(_means)}")
     gaussians.create_from_parameters(_means, _scales, _quaternions, _colors, gaussians.spatial_lr_scale)
     print("[INFO] Gaussians created from pnts data.")
 
-    del _means, _scales, _quaternions, _colors, gaussian_params, sample_idx
+    del _means, _scales, _quaternions, _colors
     gc.collect()
     torch.cuda.empty_cache()
     
@@ -353,7 +381,7 @@ def training(
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-        if viewpoint_idx >= input_view_num:                     # use small color loss for see3d view
+        if viewpoint_idx >= input_view_num or downweight_input_view_color_loss:
             loss = loss * 0.01
         
         # regularization
@@ -704,6 +732,14 @@ if __name__ == "__main__":
     pp = PipelineParams(parser)
     parser.add_argument("--refine_depth_path", type=str, required=True)
     parser.add_argument("--use_downsample_gaussians", action="store_true", help="Use downsample gaussians")
+    parser.add_argument("--downsample_gaussians_type", type=str, default="warp", choices=['warp', 'voxel'],
+                        help="Downsample method used when --use_downsample_gaussians is set")
+    parser.add_argument("--warp_depth_error_thresh", type=float, default=0.01,
+                        help="Relative depth error threshold for warp-based Gaussian downsample")
+    parser.add_argument("--warp_downsample_pixel_grid_size", type=int, default=-1,
+                        help="Pixel grid stride for warp-based Gaussian initialization")
+    parser.add_argument("--downweight_input_view_color_loss", action="store_true",
+                        help="Also reduce color loss weight for input views; See3D views are always reduced")
     parser.add_argument('--ip', type=str, default="127.0.0.1")
     parser.add_argument('--port', type=int, default=None)  # 6009
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
@@ -744,7 +780,9 @@ if __name__ == "__main__":
         args.dense_data_path, args.use_chart_view_every_n_iter,
         args.normal_consistency_from, args.distortion_from,
         args.depthanythingv2_checkpoint_dir, args.depthanything_encoder,
-        args.dense_regul, args.refine_depth_path, args.use_downsample_gaussians
+        args.dense_regul, args.refine_depth_path, args.use_downsample_gaussians,
+        args.downsample_gaussians_type, args.warp_depth_error_thresh, args.warp_downsample_pixel_grid_size,
+        args.downweight_input_view_color_loss
     )
 
     # All done

@@ -195,8 +195,12 @@ class PlaneExcavator:
             avg_normal /= np.sqrt((avg_normal ** 2).sum())  # normalize
             masks_avg_normals.append(avg_normal)
 
-        masks_avg_normals = np.stack(masks_avg_normals)
-        masks_areas = np.array(masks_areas)
+        if len(masks_avg_normals) == 0:
+            masks_avg_normals = None
+            masks_areas = None
+        else:
+            masks_avg_normals = np.stack(masks_avg_normals)
+            masks_areas = np.array(masks_areas)
 
         outputs = edict(
             {
@@ -206,7 +210,7 @@ class PlaneExcavator:
             }
         )
 
-        if vis:
+        if vis and masks_avg_normals is not None:
             img_batch = {
                 "image": img,
             }
@@ -283,11 +287,12 @@ if __name__ == "__main__":
         # normal_rgb.save(save_path)
         # print(f'save to {save_path}')
 
-        vis_map = output['vis']['plane_mask']
-        save_path = os.path.join(data_path, f'plane_vis_frame{idx:06d}.png')
-        vis_img = Image.fromarray(vis_map)
-        vis_img.save(save_path)
-        print(f'save to {save_path}')
+        if output['normal'] is not None:
+            vis_map = output['vis']['plane_mask']
+            save_path = os.path.join(data_path, f'plane_vis_frame{idx:06d}.png')
+            vis_img = Image.fromarray(vis_map)
+            vis_img.save(save_path)
+            print(f'save to {save_path}')
 
         # vis_sam_map = output['vis']['sam_masks']
         # save_path = os.path.join(data_path, f'plane_sam_vis_frame{idx:06d}.png')
@@ -302,6 +307,6 @@ if __name__ == "__main__":
         # print(f'save to {save_path}')
 
         # del output, plane_mask, vis_map, vis_sam_map, vis_normal_mask_map
-        del output, plane_mask, vis_map
+        del output, plane_mask
         torch.cuda.empty_cache()
         gc.collect()

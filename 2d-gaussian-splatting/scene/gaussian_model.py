@@ -12,6 +12,7 @@
 import torch
 import numpy as np
 from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation
+import torch.nn.functional as F
 from torch import nn
 import os
 from utils.system_utils import mkdir_p
@@ -20,6 +21,8 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
+from utils.point_utils import depths_to_points
+from tqdm import tqdm
 
 class GaussianModel:
 
@@ -834,3 +837,184 @@ def get_gaussian_normal(rotation, scaling, scale_modifier=1.0):
     normal = L[:, :, 2]
 
     return normal
+
+
+def _camera_intrinsics_from_view(view):
+    c2w = (view.world_view_transform.T).inverse()
+    width, height = view.image_width, view.image_height
+    ndc2pix = torch.tensor([
+        [width / 2, 0, 0, width / 2],
+        [0, height / 2, 0, height / 2],
+        [0, 0, 0, 1],
+    ], dtype=torch.float32, device=c2w.device).T
+    projection_matrix = c2w.T @ view.full_proj_transform
+    return (projection_matrix @ ndc2pix)[:3, :3].T
+
+
+def _project_world_points_to_view(points_world, target_view):
+    c2w = (target_view.world_view_transform.T).inverse()
+    w2c = c2w.inverse()
+    points_h = torch.cat([points_world, torch.ones_like(points_world[..., :1])], dim=-1)
+    points_cam = points_h @ w2c.T
+    points_cam = points_cam[..., :3]
+
+    intrinsics = _camera_intrinsics_from_view(target_view)
+    projected = points_cam @ intrinsics.T
+    z = projected[..., 2]
+    xy = projected[..., :2] / torch.clamp(z[..., None], min=1e-6)
+    return xy, z
+
+
+def _warp_coverage_mask(points_world, source_valid_mask, target_view, target_depth, depth_error_thresh):
+    projected_xy, projected_depth = _project_world_points_to_view(points_world, target_view)
+    height, width = target_depth.shape[-2:]
+    in_image = (
+        (projected_xy[..., 0] >= 0.0)
+        & (projected_xy[..., 0] <= width - 1)
+        & (projected_xy[..., 1] >= 0.0)
+        & (projected_xy[..., 1] <= height - 1)
+        & (projected_depth > 0.0)
+        & source_valid_mask
+    )
+
+    u_int = torch.clamp(torch.round(projected_xy[..., 0]).long(), 0, width - 1)
+    v_int = torch.clamp(torch.round(projected_xy[..., 1]).long(), 0, height - 1)
+    target_depth = target_depth.squeeze()
+    target_depth_sampled = target_depth[v_int, u_int]
+    target_valid = target_depth_sampled > 0.0
+    relative_depth_error = torch.abs(projected_depth - target_depth_sampled) / (projected_depth.abs() + 1e-6)
+    depth_match = relative_depth_error < depth_error_thresh
+    return in_image & target_valid & depth_match
+
+
+def _points_to_normal_map(points_world):
+    normals = torch.zeros_like(points_world)
+    if points_world.shape[0] < 3 or points_world.shape[1] < 3:
+        normals[..., 2] = 1.0
+        return normals
+
+    dx = points_world[2:, 1:-1] - points_world[:-2, 1:-1]
+    dy = points_world[1:-1, 2:] - points_world[1:-1, :-2]
+    normal_map = F.normalize(torch.cross(dx, dy, dim=-1), dim=-1)
+    normals[1:-1, 1:-1] = normal_map
+    normals[0, 1:-1] = normals[1, 1:-1]
+    normals[-1, 1:-1] = normals[-2, 1:-1]
+    normals[:, 0] = normals[:, 1]
+    normals[:, -1] = normals[:, -2]
+    return normals
+
+
+def _matrix_to_quaternion(rotation_matrices):
+    m = rotation_matrices
+    qw = torch.sqrt(torch.clamp(1.0 + m[:, 0, 0] + m[:, 1, 1] + m[:, 2, 2], min=0.0)) / 2.0
+    qx = torch.sqrt(torch.clamp(1.0 + m[:, 0, 0] - m[:, 1, 1] - m[:, 2, 2], min=0.0)) / 2.0
+    qy = torch.sqrt(torch.clamp(1.0 - m[:, 0, 0] + m[:, 1, 1] - m[:, 2, 2], min=0.0)) / 2.0
+    qz = torch.sqrt(torch.clamp(1.0 - m[:, 0, 0] - m[:, 1, 1] + m[:, 2, 2], min=0.0)) / 2.0
+
+    qx = qx * torch.sign(m[:, 2, 1] - m[:, 1, 2] + 1e-12)
+    qy = qy * torch.sign(m[:, 0, 2] - m[:, 2, 0] + 1e-12)
+    qz = qz * torch.sign(m[:, 1, 0] - m[:, 0, 1] + 1e-12)
+    return F.normalize(torch.stack([qw, qx, qy, qz], dim=-1), dim=-1)
+
+
+def _normals_to_quaternions(normals):
+    z_axis = F.normalize(normals, dim=-1)
+    ref = torch.tensor([1.0, 0.0, 0.0], dtype=z_axis.dtype, device=z_axis.device).expand(z_axis.shape[0], -1).clone()
+    is_parallel = torch.abs(z_axis[:, 0]) > 0.9
+    ref[is_parallel] = torch.tensor([0.0, 1.0, 0.0], dtype=z_axis.dtype, device=z_axis.device)
+    x_axis = F.normalize(torch.cross(ref, z_axis, dim=-1), dim=-1)
+    y_axis = torch.cross(z_axis, x_axis, dim=-1)
+    rot_matrices = torch.stack([x_axis, y_axis, z_axis], dim=-1)
+    return _matrix_to_quaternion(rot_matrices)
+
+
+def _points_to_distance_map(points_world):
+    dist_h = torch.norm(points_world[:, 1:, :] - points_world[:, :-1, :], dim=-1)
+    dist_v = torch.norm(points_world[1:, :, :] - points_world[:-1, :, :], dim=-1)
+
+    if dist_h.shape[1] == 0 or dist_v.shape[0] == 0:
+        return torch.full(points_world.shape[:2], 1e-3, dtype=points_world.dtype, device=points_world.device)
+
+    dist_r = torch.cat([dist_h, dist_h[:, -1:]], dim=1)
+    dist_l = torch.cat([dist_h[:, :1], dist_h], dim=1)
+    dist_d = torch.cat([dist_v, dist_v[-1:, :]], dim=0)
+    dist_u = torch.cat([dist_v[:1, :], dist_v], dim=0)
+    return torch.stack([dist_r, dist_l, dist_d, dist_u], dim=0).min(dim=0).values
+
+
+def get_gaussian_parameters_by_warp_from_depths(
+    depths,
+    views,
+    depth_error_thresh=0.01,
+    min_scale=0.0005,
+    max_scale=0.05,
+    downsample_pixel_grid_size=-1,
+):
+    """
+    Initialize one Gaussian only for pixels that are not already covered by earlier
+    initialized views under depth-consistent warping.
+    """
+    means = []
+    scales = []
+    quaternions = []
+    colors = []
+    initialized_view_ids = []
+
+    for idx, (depth, view) in enumerate(tqdm(list(zip(depths, views)), desc="Initializing Gaussians by warp")):
+        depth = depth.squeeze().cuda()
+        points_world = depths_to_points(view, depth).reshape(depth.shape[0], depth.shape[1], 3)
+        valid_mask = depth > 0.0
+
+        if downsample_pixel_grid_size > 0:
+            downsample_mask = torch.zeros_like(valid_mask, dtype=torch.bool)
+            downsample_mask[::downsample_pixel_grid_size, ::downsample_pixel_grid_size] = True
+        else:
+            downsample_mask = torch.ones_like(valid_mask, dtype=torch.bool)
+
+        covered_mask = torch.zeros_like(valid_mask, dtype=torch.bool)
+        for initialized_idx in initialized_view_ids:
+            covered_mask |= _warp_coverage_mask(
+                points_world,
+                valid_mask,
+                views[initialized_idx],
+                depths[initialized_idx].squeeze().cuda(),
+                depth_error_thresh,
+            )
+
+        keep_mask = ((~covered_mask) & downsample_mask & valid_mask).reshape(-1)
+        if not keep_mask.any():
+            initialized_view_ids.append(idx)
+            continue
+
+        distance_map = _points_to_distance_map(points_world)
+        scale_values = distance_map.reshape(-1)[keep_mask] / 2.0
+        if downsample_pixel_grid_size > 0:
+            scale_values = scale_values * downsample_pixel_grid_size
+        view_scales = scale_values[..., None].repeat(1, 2)
+
+        normal_map = _points_to_normal_map(points_world)
+        view_normals = normal_map.reshape(-1, 3)[keep_mask]
+        view_quaternions = _normals_to_quaternions(view_normals)
+        view_colors = view.original_image.cuda().permute(1, 2, 0).reshape(-1, 3)[keep_mask]
+
+        means.append(points_world.reshape(-1, 3)[keep_mask])
+        scales.append(view_scales)
+        quaternions.append(view_quaternions)
+        colors.append(view_colors)
+        initialized_view_ids.append(idx)
+
+    if len(means) == 0:
+        raise RuntimeError("Warp-based Gaussian initialization produced no valid points.")
+
+    means = torch.cat(means, dim=0)
+    scales = torch.cat(scales, dim=0)
+    quaternions = torch.cat(quaternions, dim=0)
+    colors = torch.cat(colors, dim=0)
+
+    valid_scale_mask = scales[..., 0] < max_scale
+    return (
+        means[valid_scale_mask],
+        scales[valid_scale_mask].clamp(min=min_scale),
+        quaternions[valid_scale_mask],
+        colors[valid_scale_mask],
+    )

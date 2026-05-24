@@ -71,6 +71,14 @@ if __name__ == '__main__':
     # G4Splat config
     parser.add_argument('--select_inpaint_num', type=int, default=20, help='Number of views to select for inpainting.')
     parser.add_argument('--use_downsample_gaussians', action='store_true', help='Use downsample gaussians for training')
+    parser.add_argument('--downsample_gaussians_type', type=str, default='warp', choices=['warp', 'voxel'],
+        help='Downsample method used when --use_downsample_gaussians is set')
+    parser.add_argument('--warp_depth_error_thresh', type=float, default=0.01,
+        help='Relative depth error threshold for warp-based Gaussian downsample')
+    parser.add_argument('--warp_downsample_pixel_grid_size', type=int, default=-1,
+        help='Pixel grid stride for warp-based Gaussian initialization')
+    parser.add_argument('--downweight_input_view_color_loss', action='store_true',
+        help='Also reduce color loss weight for input views; See3D views are always reduced')
     parser.add_argument('--use_mesh_filter', action='store_true', help='Use mesh filter')
     parser.add_argument('--use_dense_view', action='store_true', help='Use dense view for training')                    # Add an additional input stage to extend plane-aware depth estimation across all input views
     args = parser.parse_args()
@@ -163,6 +171,10 @@ if __name__ == '__main__':
         "--dense_regul", args.dense_regul,
         "--refine_depth_path", plane_root_path,
         "--use_downsample_gaussians" if args.use_downsample_gaussians else "",
+        "--downsample_gaussians_type", args.downsample_gaussians_type,
+        "--warp_depth_error_thresh", str(args.warp_depth_error_thresh),
+        "--warp_downsample_pixel_grid_size", str(args.warp_downsample_pixel_grid_size),
+        "--downweight_input_view_color_loss" if args.downweight_input_view_color_loss else "",
     ])
 
     render_all_img_command = " ".join([
